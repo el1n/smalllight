@@ -46,41 +46,27 @@ small_light_filter_prototype(imagemagick);
 static const char small_light_filter_name[] = "SMALL_LIGHT";
 module AP_MODULE_DECLARE_DATA small_light_module;
 
-static void *create_small_light_server_conf(apr_pool_t *p, server_rec *s)
+static void *create_dir_conf(apr_pool_t *pool, char *context)
 {
-    small_light_server_conf_t *conf;
-    conf = (small_light_server_conf_t *)apr_pcalloc(p, sizeof(small_light_server_conf_t));
-    conf->p = p;
-    conf->h = apr_hash_make(conf->p);
-    return conf;
+	small_light_pattern_t *cfg = apr_pcalloc(pool,sizeof(small_light_pattern_t));
+
+	return(cfg);
 }
 
-static const char *small_light_define_pattern(cmd_parms *cmd, void *ctx, const char *arg1, const char *arg2)
+static const char *small_light_define_pattern(cmd_parms *cmd, void *cfg, const char *arg)
 {
-    small_light_server_conf_t *sc = ap_get_module_config(
-        cmd->server->module_config, &small_light_module);
+    small_light_pattern_t *conf = (small_light_pattern_t *)cfg;
 
-    const char *key = arg1;
-    const char *value = arg2;
-    
-    if (apr_hash_get(sc->h, key, APR_HASH_KEY_STRING)) {
-        return (char *)(size_t)apr_psprintf(cmd->pool, "SmallLightPatternDefine %s is already defined", key);
-    }
-
-    small_light_pattern_t *ptn;
-    ptn = (small_light_pattern_t *)apr_pcalloc(sc->p, sizeof(small_light_pattern_t));
-    ptn->name = key;
-    ptn->param_str = (char *)apr_pstrdup(cmd->pool, value);
-    apr_hash_set(sc->h, key, APR_HASH_KEY_STRING, ptn);
-
-    return NULL;
+	if(conf){
+		conf->param_str = arg;
+	}
+	return(NULL);
 }
 
 static small_light_pattern_t *small_light_find_pattern(request_rec *r, char *name)
 {
-    small_light_server_conf_t *sc = ap_get_module_config(
-        r->server->module_config, &small_light_module);
-    small_light_pattern_t *ptn = apr_hash_get(sc->h, name, APR_HASH_KEY_STRING);
+    small_light_pattern_t *ptn = ap_get_module_config(
+        r->per_dir_config, &small_light_module);
     return ptn;
 }
 
@@ -156,27 +142,10 @@ static apr_status_t small_light_filter(ap_filter_t *f, apr_bucket_brigade *bb)
         ap_log_rerror(APLOG_MARK, APLOG_INFO, 0, r, "uri=%s", r->uri);
         int res;
         char param_str[SMALL_LIGHT_PARAM_STR_MAX];
-        res = small_light_parse_uri_param(r, param_str, r->unparsed_uri);
-        if (res != OK) {
-            ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "parse_uri_param failed: %s", r->unparsed_uri);
-            r->status = HTTP_BAD_REQUEST;
-            ap_remove_output_filter(f);
-            return ap_pass_brigade(f->next, bb);
-        }
         ctx->prm = apr_table_make(r->pool, 10);
         small_light_init_param(ctx->prm);
-        res = small_light_parse_param(r, ctx->prm, param_str);
-        if (res != OK) {
-            ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "parse_param failed: %s", r->unparsed_uri);
-            r->status = HTTP_BAD_REQUEST;
-            ap_remove_output_filter(f);
-            return ap_pass_brigade(f->next, bb);
-        }
-        char *pattern = (char *)apr_table_get(ctx->prm, "p");
-        ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r, "pattern=%s", pattern);
         small_light_pattern_t *ptn = NULL;
-        if (pattern && pattern[0] != '\0') {
-            ptn = small_light_find_pattern(r, pattern);
+            ptn = small_light_find_pattern(r,NULL);
             if (!ptn) {
                 ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "pattern not found: %s", param_str);
                 r->status = HTTP_BAD_REQUEST;
@@ -193,7 +162,6 @@ static apr_status_t small_light_filter(ap_filter_t *f, apr_bucket_brigade *bb)
                 ap_remove_output_filter(f);
                 return ap_pass_brigade(f->next, bb);
             }
-        }
         char *engine = (char *)apr_table_get(ctx->prm, "e");
         if (!engine || engine[0] == '\0') {
             apr_table_set(ctx->prm, "e", SMALL_LIGHT_DEFAULT_ENGINE);
@@ -298,11 +266,11 @@ static void small_light_register_hooks(apr_pool_t *p)
 
 static const command_rec small_light_cmds[] =
 {
-    AP_INIT_TAKE2(
-        "SmallLightPatternDefine",
+    AP_INIT_TAKE1(
+        "SmallLight",
         small_light_define_pattern,
         NULL,
-        RSRC_CONF,
+		ACCESS_CONF,
         "define pattern"),
     {NULL}
 };
@@ -311,9 +279,9 @@ static const command_rec small_light_cmds[] =
 module AP_MODULE_DECLARE_DATA small_light_module =
 {
     STANDARD20_MODULE_STUFF, 
-    NULL,                           /* create per-dir    config structures */
+    create_dir_conf,                /* create per-dir    config structures */
     NULL,                           /* merge  per-dir    config structures */
-    create_small_light_server_conf, /* create per-server config structures */
+    NULL,                           /* create per-server config structures */
     NULL,                           /* merge  per-server config structures */
     small_light_cmds,               /* table of config file commands       */
     small_light_register_hooks      /* register hooks                      */
